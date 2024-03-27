@@ -87,7 +87,7 @@ def encode_file(i_file, crt_or_domain, tip):
     while len(data) != 0:
         enc_data = cipher.encrypt(data)
         file_out.write(enc_data)
-        data = file_in.read(BUFFER_SIZE) 
+        data = file_in.read(BUFFER_SIZE)
 
     # Viene aggiunto il valore del tag (16 bytes) emesso dal cifratore GCM
     # al file cifrato
@@ -133,9 +133,9 @@ def decode_file(i_file, pk_file):
     file_out = open(o_file, 'wb')
 
     for _ in range(int(encrypted_data_size / BUFFER_SIZE)):
-        data = file_in.read(BUFFER_SIZE) 
-        decrypted_data = cipher.decrypt(data) 
-        file_out.write(decrypted_data) 
+        data = file_in.read(BUFFER_SIZE)
+        decrypted_data = cipher.decrypt(data)
+        file_out.write(decrypted_data)
 
     # Legge il "Fuori blocco" contenente il tag
     #
@@ -145,7 +145,7 @@ def decode_file(i_file, pk_file):
 
     tag = file_in.read(16)
 
-    # Chiede la verifica del tag al cifratore se il file 
+    # Chiede la verifica del tag al cifratore se il file
     # è correttamente decifrato la verifica sarà ok.
     # altrimenti distrugge il file decodificato in maniera errata
     try:

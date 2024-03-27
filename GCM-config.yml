@@ -1,0 +1,8 @@
+rest:
+  url: "http://127.0.0.1"
+  port: 8000
+  id: "AA000AAA"
+  name: "Mariano Mancini"
+
+otp_id:
+  seed: "b6a82cc095258d5006661371191c59173545ca9b1da0c1815706cecc92da33e4"
