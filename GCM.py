@@ -5,30 +5,82 @@ import yaml
 import requests
 
 from cryptography import x509
-# from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.twofactor.totp import TOTP
-# from cryptography.hazmat.primitives.keywrap import aes_key_unwrap
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 
 DNS = 0
 CRT = 1
+
+CRYPT_GCM_SESSION_KEY_SIZE = 32
+CRYPT_KEY_LOCATOR_SIZE = 50
+CRYPT_ENC_GCM_SIZE = 256
+CRYPT_GCM_NONCE_SIZE = 16
+CRYPT_GCM_TAG_SIZE = 16
+
+CRYPT_HEADER_SIZE = CRYPT_KEY_LOCATOR_SIZE \
+                    + CRYPT_ENC_GCM_SIZE \
+                    + CRYPT_GCM_NONCE_SIZE \
+                    + CRYPT_GCM_TAG_SIZE
+
+CRYPT_TAG_POINTER = CRYPT_KEY_LOCATOR_SIZE \
+                    + CRYPT_ENC_GCM_SIZE \
+                    + CRYPT_GCM_NONCE_SIZE
+
 BUFFER_SIZE = 1024 * 1024
+TOTP_VALID_TIME = 30
+TOTP_DIGITS = 8
 
 conf_book = []
 
+master = '12345678901234567890123456789012'
 
-def make_request():
-    mysel= 'sel=AAA'
-    myid = '&id='+conf_book['rest']['id']
-    myval = '&val='+get_totp_code().decode()
-    url = conf_book['rest']['url'] + ':' + str(conf_book['rest']['port'])+'/req?'+mysel+myid+myval
-    print(url)
-    r = requests.get(url)
-    print(r.text)
+
+def get_hkdf_key(master_key, salt):
+
+    info = b"SecCheck_01"
+
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        info=info,
+    )
+
+    key = hkdf.derive(master_key)
+
+    return (key)
+
+
+def key_request_for_file(i_file):
+    """
+    La funzione analizza la testata del file cifrato per sapere dove
+    cercare la chiave privata relativa.
+    """
+    # (dir, file ) = os.path.split(i_file)
+    file_in = open(i_file, 'rb')
+    cert_name = file_in.read(50).decode()
+    file_in.close()
+
+    if (cert_name[0] == '0'):
+        # Il certificato è un DNS  quindi la chiave deve essere cercata
+        # nel server di chiavi
+        mysel = 'sel='+cert_name.strip()
+        myid = '&id='+conf_book['rest']['id']  # type: ignore
+        myval = '&val='+get_totp_code().decode()
+        url = conf_book['rest']['url'] + ':' + str(conf_book['rest']['port']) + '/req?'+mysel+myid+myval  # type: ignore
+        print(url)
+        # r = requests.get(url)
+        # print(r.text)
+    else:
+        # Il certificato è un CRT locale quindi la chiave deve essere 
+        # cercata nel vault locale
+        pass
 
 
 def get_config():
@@ -40,16 +92,24 @@ def get_config():
 
 def get_totp_code():
 
-    seed = conf_book['otp_id']['seed']
+    seed = conf_book['otp_id']['seed']  # type: ignore
     key = bytes.fromhex(seed)
-    totp = TOTP(key, 8, hashes.SHA256(), 30)
+    totp = TOTP(key, TOTP_DIGITS, hashes.SHA256(), TOTP_VALID_TIME)
     time_value = time.time()
     t_value = totp.generate(int(time_value))
     return (t_value)
 
 
 def get_rsa_public_key(cert_or_domain_name, tip):
+    """Estrae la chiave pubblica da un certificato tipo X.509
 
+    Args:
+        cert_or_domain_name (str): Nome del dominio o del file del certificato
+        tip (int): Flag DNS/CRT
+
+    Returns:
+        (bytes,bytes): Chiave pubblica, Nome del certificato
+    """
     if tip == DNS:
         cert = ssl.get_server_certificate((cert_or_domain_name, 443))
 
@@ -60,21 +120,38 @@ def get_rsa_public_key(cert_or_domain_name, tip):
                 (cert_or_domain_name, 443)), 'utf-8')
     cert_obj = x509.load_pem_x509_certificate(cert)
     pub_key_rsa = cert_obj.public_key()
+    cert_nm = x509.Name(cert_obj.subject.get_attributes_for_oid(NameOID.COMMON_NAME))
+    cert_name = f"{tip},{cert_nm.rfc4514_string():{' '}{'<'}{CRYPT_KEY_LOCATOR_SIZE -2}}".encode()
+    return (pub_key_rsa, cert_name)
 
-    return (pub_key_rsa)
 
+def get_rsa_private_key(keyfile, pwd=None):
+    """Legge una chiave privata RSA da un file.
 
-def get_rsa_private_key(keyfile):
+    Args:
+        keyfile (string): Nome del file che contiene lachiave
+        pwd (bytes, optional): Password per PCKS. Defaults to None.
 
+    Returns:
+        bytes: Chiave privata
+    """
     with open(keyfile, "rb") as key_file:
         priv_key = serialization.load_pem_private_key(
-                    key_file.read(), password=None, )
+                    key_file.read(), password=pwd, )
 
     return (priv_key)
 
 
 def get_enc_session_key(rsa_key, data):
+    """Cifra un blocco utilizzando AES-OAEP.
 
+    Args:
+        rsa_key (bytes): Chiave RSA per codificare i dati
+        data (bytes): Dati da codificare
+
+    Returns:
+        bytes: Dati codificati AES-OAEP
+    """
     enc_data = rsa_key.encrypt(data, padding.OAEP(
         mgf=padding.MGF1(algorithm=hashes.SHA256()),
         algorithm=hashes.SHA256(),
@@ -84,7 +161,15 @@ def get_enc_session_key(rsa_key, data):
 
 
 def get_dec_session_key(rsa_key, data):
+    """Decfira un blocco utilizzanndo AES-OAEP.
 
+    Args:
+        rsa_key (bytes): Chiave RSA per decodificare i dati
+        data (bytes): Dati da decodificare
+
+    Returns:
+        bytes: Dati decodficati
+    """
     dec_data = rsa_key.decrypt(data, padding.OAEP(
         mgf=padding.MGF1(algorithm=hashes.SHA256()),
         algorithm=hashes.SHA256(),
@@ -99,12 +184,12 @@ def encode_file(i_file, crt_or_domain, tip):
 
     # Crea una chiave di sessione da 32 bytes ed un nonce da 16 bytes
 
-    gcm_session_key = os.urandom(32)
-    gcm_nonce = os.urandom(16)
+    gcm_session_key = os.urandom(CRYPT_GCM_SESSION_KEY_SIZE)
+    gcm_nonce = os.urandom(CRYPT_GCM_TAG_SIZE)
 
     # Crea la copia cifrata della chiave di sessione utilizzando
     # come chiave la chaive pubblica RSA del certificato
-    rsa_pub_key = get_rsa_public_key(crt_or_domain, tip)
+    rsa_pub_key, cert_name = get_rsa_public_key(crt_or_domain, tip)
     rsa_enc_gcm_key = get_enc_session_key(rsa_pub_key, gcm_session_key)
 
     # Prepara la cifratura GCM utilizzando la chiave di sessione
@@ -120,6 +205,7 @@ def encode_file(i_file, crt_or_domain, tip):
 
     file_out = open(o_file, 'wb')
 
+    file_out.write(cert_name)  # 50 bytes
     file_out.write(rsa_enc_gcm_key)  # 256 bytes
     file_out.write(gcm_nonce) 	 # 16 bytes
     file_out.write(b'****************')
@@ -135,11 +221,11 @@ def encode_file(i_file, crt_or_domain, tip):
         data = file_in.read(BUFFER_SIZE)
 
     # Viene aggiunto il valore del tag (16 bytes) emesso dal cifratore GCM
-    # al file cifrato
+    # al file cifrato rimuovendo il placeholder.
     encryptor.finalize()
 
     tg = encryptor.tag  # type: ignore
-    file_out.seek(272, 0)
+    file_out.seek(CRYPT_TAG_POINTER, 0)
     file_out.write(tg)	 # 16 bytes
 
     file_in.close()
@@ -156,11 +242,12 @@ def decode_file(i_file, pk_file):
 
     file_in = open(i_file, 'rb')
 
-    rsa_enc_gcm_key = file_in.read(256)
-    nonce = file_in.read(16)
-    tag = file_in.read(16)
+    _ = file_in.read(CRYPT_KEY_LOCATOR_SIZE)
+    rsa_enc_gcm_key = file_in.read(CRYPT_ENC_GCM_SIZE)
+    nonce = file_in.read(CRYPT_GCM_NONCE_SIZE)
+    tag = file_in.read(CRYPT_GCM_TAG_SIZE)
 
-    # Utilizzando il file di chiave privata del certtificato usato per cifrare
+    # Utilizzando il file di chiave privata del certificato usato per cifrare
     # recupera e decifra la chiave di sessione GCM
 
     priv_rsa_key = get_rsa_private_key(pk_file)
@@ -173,23 +260,23 @@ def decode_file(i_file, pk_file):
 
     # Calcola la dimensione del file crittografato per controllare
     # da quanti blocchi interi è costituita la zona dati crittografata
-    # al netto della chiave del nonce e del tag
+    # al netto della deimsione del CRYPT_HEADER
 
-    file_in_size = os.path.getsize(i_file)
-    encrypted_data_size = file_in_size - 256 - 16 - 16
+    f_sz = os.path.getsize(i_file)
+    enc_blk_size = f_sz - CRYPT_HEADER_SIZE
+    enc_blk_nums = int(enc_blk_size / BUFFER_SIZE)
+    enc_blk_xtra = int(enc_blk_size % BUFFER_SIZE)
 
     # Legge il file di ingresso blocco per blocco, lo decodifica
     # e lo scrive sul nuovo file decodificato
     file_out = open(o_file, 'wb')
 
-    for _ in range(int(encrypted_data_size / BUFFER_SIZE)):
+    for _ in range(enc_blk_nums):
         data = file_in.read(BUFFER_SIZE)
         decrypted_data = decryptor.update(data)
         file_out.write(decrypted_data)
 
-    # Legge il "Fuori blocco" contenente il tag
-    #
-    data = file_in.read(int(encrypted_data_size % BUFFER_SIZE))
+    data = file_in.read(enc_blk_xtra)
     decrypted_data = decryptor.update(data)
     file_out.write(decrypted_data)
 
@@ -198,25 +285,24 @@ def decode_file(i_file, pk_file):
     # altrimenti distrugge il file decodificato in maniera errata
     try:
         decryptor.finalize()
-    except ValueError as e:
+    except ValueError:
         file_in.close()
         file_out.close()
         os.remove(o_file)
-        raise e
+        pass
 
     file_in.close()
     file_out.close()
 
 
-# encode_file('/home/mariano/Scrivania/Testfile.pdf',
-#            'www.magaldinnova.it', DNS)
+encode_file('/home/mariano/Scrivania/Testfile.pdf',
+            'www.magaldinnova.it', DNS)
 
-# decode_file('/home/mariano/Scrivania/Testfile.pdf',
-#            '/home/mariano/Scrivania/MI.key')
+decode_file('/home/mariano/Scrivania/Testfile.pdf',
+            '/home/mariano/Scrivania/MI.key')
 
 conf_book = get_config()
-print(get_totp_code())
-make_request()
+#key_request_for_file('/home/mariano/Scrivania/Testfile.pdf.crypt')
 # pub_rsa_key = get_rsa_public_key('www.magaldinnova.it', DNS)
 # enc_pub_rsa_key = get_enc_session_key(pub_rsa_key, b'1233456789')
 
