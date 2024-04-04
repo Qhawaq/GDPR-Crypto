@@ -32,7 +32,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/pypa/sampleproject"
-Issues = "https://github.com/pypa/sampleproject/issues"
+Homepage = "https://github.com/Qhawaq/GDPR-Crypto"
+Issues = "https://github.com/Qhawaq/GDPR-Crypto/issues"
 
 

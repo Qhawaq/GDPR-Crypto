@@ -2,7 +2,7 @@ import os
 import time
 
 from typing import List
-from models import User
+from GDPRUtils.src.GDPRUtils.Keymaster.models import User
 from .keyvault import stream_keyfile
 from fastapi import FastAPI
 
