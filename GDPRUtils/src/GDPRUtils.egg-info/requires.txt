@@ -1,0 +1,6 @@
+yaml
+json
+requests
+pydantic
+criptography
+fastapi

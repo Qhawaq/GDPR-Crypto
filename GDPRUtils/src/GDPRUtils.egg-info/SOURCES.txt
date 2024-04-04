@@ -1,0 +1,9 @@
+LICENSE.txt
+README.md
+pyproject.toml
+src/GDPRUtils/keyvault.py
+src/GDPRUtils.egg-info/PKG-INFO
+src/GDPRUtils.egg-info/SOURCES.txt
+src/GDPRUtils.egg-info/dependency_links.txt
+src/GDPRUtils.egg-info/requires.txt
+src/GDPRUtils.egg-info/top_level.txt
