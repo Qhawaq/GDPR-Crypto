@@ -45,32 +45,36 @@ conf_book = []
 # Creo la coppia chiave privata/pubblica per il DH
 dh_private_key = ec.generate_private_key(ec.SECP384R1())
 dh_public_key = dh_private_key.public_key()
-dh_p = dh_public_key.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+dh_p = dh_public_key.public_bytes(
+    serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+)  # noqa
 
 
 # chiave condivisa in DH peer_public_key è Inivato dal client
-#shared_key = dh_private_key.exchange(ec.ECDH(), peer_public_key)
+# shared_key = dh_private_key.exchange(ec.ECDH(), peer_public_key)
+
 
 def xchg_dh_key():
     myval = "peer_key=" + urlsafe_b64encode(dh_p).decode()
     url = (
-        conf_book["rest"]["url"]
+        conf_book["rest"]["url"]  # type: ignore
         + ":"
-        + str(conf_book["rest"]["port"])
+        + str(conf_book["rest"]["port"])  # type: ignore
         + "/k_excg?"
         + myval
-        )  # type: ignore
+    )  # type: ignore
 
     r = requests.get(url)
     x = json.loads(r.text)
 
-    server_key_bytes = serialization.load_pem_public_key(urlsafe_b64decode(x['server_key']))
+    server_key_bytes = serialization.load_pem_public_key(
+        urlsafe_b64decode(x["server_key"])
+    )  # noqa
     shared_key = dh_private_key.exchange(ec.ECDH(), server_key_bytes)
     print(shared_key)
 
 
 def get_hkdf_key(master_key, salt):
-
     info = b"SecCheck_01"  # TODO: NON CRITICO, ma Eve potrebbe fare festa !
 
     hkdf = HKDF(
@@ -102,16 +106,17 @@ def key_request_for_file(i_file):
         myid = "&id=" + conf_book["rest"]["id"]  # type: ignore
         myval = "&val=" + get_totp_code().decode()
         url = (
-            conf_book["rest"]["url"]
+            conf_book["rest"]["url"]  # type: ignore
             + ":"
-            + str(conf_book["rest"]["port"])
+            + str(conf_book["rest"]["port"])  # type: ignore
             + "/req?"
             + mysel
             + myid
             + myval
         )  # type: ignore
         r = requests.get(url)
-        #x = json.decode(r.text)
+        x = json.decode(r.text)  # type: ignore
+        return (x)
     else:
         # Il certificato è un CRT locale quindi la chiave deve essere
         # cercata nel vault locale
@@ -149,7 +154,7 @@ def get_rsa_public_key(cert_or_domain_name, tip):
     if tip == CRT:
         cert = open(cert_or_domain_name).read()
 
-    cert = bytes(ssl.get_server_certificate((cert_or_domain_name, 443)), "utf-8")
+    cert = bytes(ssl.get_server_certificate((cert_or_domain_name, 443)), "utf-8")  # noqa
     cert_obj = x509.load_pem_x509_certificate(cert)
     pub_key_rsa = cert_obj.public_key()
     cert_nm = x509.Name(cert_obj.subject.get_attributes_for_oid(NameOID.COMMON_NAME))  # noqa
@@ -236,7 +241,7 @@ def encode_file(i_file, crt_or_domain, tip):
     # Prepara la cifratura GCM utilizzando la chiave di sessione
     encryptor = Cipher(
         algorithms.AES(gcm_session_key),
-        modes.GCM(gcm_nonce),
+        modes.GCM(gcm_nonce),  # type: ignore
     ).encryptor()  # type: ignore
 
     # Nel file criptato i primi tre blocchi sono la chiave di sessione
@@ -299,7 +304,7 @@ def decode_file(i_file, pk_file):
     # decifrata
     decryptor = Cipher(
         algorithms.AES(rsa_dec_gcm_key),
-        modes.GCM(nonce, tag),
+        modes.GCM(nonce, tag),  # type: ignore
     ).decryptor()  # type: ignore
 
     # Calcola la dimensione del file crittografato per controllare
@@ -339,9 +344,9 @@ def decode_file(i_file, pk_file):
     file_out.close()
 
 
-#encode_file("/home/mariano/Scrivania/Testfile.pdf", "www.magaldinnova.it", DNS)
+# encode_file("/home/mariano/Scrivania/Testfile.pdf", "www.magaldinnova.it", DNS) # noqa
 
-#decode_file("/home/mariano/Scrivania/Testfile.pdf", "/home/mariano/Scrivania/MI.key")
+# decode_file("/home/mariano/Scrivania/Testfile.pdf", "/home/mariano/Scrivania/MI.key") # noqa
 
 conf_book = get_config()
 xchg_dh_key()
