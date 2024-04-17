@@ -7,13 +7,16 @@ import requests
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key,  Encoding # noqa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.twofactor.totp import TOTP
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import BestAvailableEncryption  # noqa
+from cryptography.hazmat.primitives.serialization import PrivateFormat, NoEncryption  # noqa
 
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 
@@ -42,81 +45,80 @@ TOTP_DIGITS = 8
 
 conf_book = []
 
-# Creo la coppia chiave privata/pubblica per il DH
-dh_private_key = ec.generate_private_key(ec.SECP384R1())
-dh_public_key = dh_private_key.public_key()
-dh_p = dh_public_key.public_bytes(
-    serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
-)  # noqa
 
+def get_hkdf_key(master_key: bytes,
+                 lngh: int = 32,
+                 salt: bytes = b'0', info: bytes = b'SecCheck01') -> bytes:
+    """ Derive a key from master_key using HKDF
 
-# chiave condivisa in DH peer_public_key è Inivato dal client
-# shared_key = dh_private_key.exchange(ec.ECDH(), peer_public_key)
+    Args:
+        master_key (bytes): Master Key
+        lngh (int, optional): length of derived key in bytes. Defaults to 32.
+        salt (bytes, optional): salt to use in key derive. Defaults to b'0'.
+        info (bytes, optional): additional info to use in key derive.
+                                Defaults to b'SecCheck01'.
 
-
-def xchg_dh_key():
-    myval = "peer_key=" + urlsafe_b64encode(dh_p).decode()
-    url = (
-        conf_book["rest"]["url"]  # type: ignore
-        + ":"
-        + str(conf_book["rest"]["port"])  # type: ignore
-        + "/k_excg?"
-        + myval
-    )  # type: ignore
-
-    r = requests.get(url)
-    x = json.loads(r.text)
-
-    server_key_bytes = serialization.load_pem_public_key(
-        urlsafe_b64decode(x["server_key"])
-    )  # noqa
-    shared_key = dh_private_key.exchange(ec.ECDH(), server_key_bytes)
-    print(shared_key)
-
-
-def get_hkdf_key(master_key, salt):
-    info = b"SecCheck_01"  # TODO: NON CRITICO, ma Eve potrebbe fare festa !
-
+    Returns:
+        bytes: Derived key        
+    """
     hkdf = HKDF(
-        algorithm=hashes.SHA256(),
-        length=32,
+        algorithm=SHA256(),
+        length=lngh,
         salt=salt,
         info=info,
     )
-
     key = hkdf.derive(master_key)
-
     return key
 
-
-def key_request_for_file(i_file):
+#scambio ECDH completo
+def priv_key_request_for_file(i_file):
     """
     La funzione analizza la testata del file cifrato per sapere dove
     cercare la chiave privata relativa.
     """
-    # (dir, file ) = os.path.split(i_file)
+    # Creo la coppia chiave privata/pubblica per il DH
+    dh_private_key = ec.generate_private_key(ec.SECP384R1())
+    dh_public_key = dh_private_key.public_key()
+    dh_p = dh_public_key.public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )  # noqa
+
     file_in = open(i_file, "rb")
-    cert_name = file_in.read(50).decode()
+    cert_name = file_in.read(50).decode().strip()
     file_in.close()
+    cert = cert_name.split('=')
+
 
     if cert_name[0] == "0":
         # Il certificato è un DNS  quindi la chiave deve essere cercata
         # nel server di chiavi
-        mysel = "sel=" + cert_name.strip()
-        myid = "&id=" + conf_book["rest"]["id"]  # type: ignore
-        myval = "&val=" + get_totp_code().decode()
+        myid = "id=" + conf_book["rest"]["id"]  # type: ignore
+        mysel = "&sel=" + cert[1]
+        myotp = "&otp=" + get_totp_code().decode()
+        mykey = "&key=" + urlsafe_b64encode(dh_p).decode()
         url = (
             conf_book["rest"]["url"]  # type: ignore
             + ":"
             + str(conf_book["rest"]["port"])  # type: ignore
-            + "/req?"
-            + mysel
+            + "/getmykey?"
             + myid
-            + myval
+            + mysel
+            + myotp
+            + mykey
         )  # type: ignore
+        
         r = requests.get(url)
-        x = json.decode(r.text)  # type: ignore
-        return (x)
+        x = json.loads(r.text)  # type: ignore
+
+        server_key_bytes = load_pem_public_key(urlsafe_b64decode(x['server_key']))
+        shared_key = dh_private_key.exchange(ec.ECDH(), server_key_bytes)
+        stream_key = get_hkdf_key(shared_key) # chiave di decodifica
+
+        pkb = load_pem_private_key(urlsafe_b64decode(x['keyfile']), stream_key)
+        return pkb.private_bytes(
+            Encoding.PEM, PrivateFormat.PKCS8, NoEncryption() # noqa
+        )
+        #return private_key_bytes
     else:
         # Il certificato è un CRT locale quindi la chiave deve essere
         # cercata nel vault locale
@@ -132,7 +134,7 @@ def get_config():
 def get_totp_code():
     seed = conf_book["otp_id"]["seed"]  # type: ignore
     key = bytes.fromhex(seed)
-    totp = TOTP(key, TOTP_DIGITS, hashes.SHA256(), TOTP_VALID_TIME)
+    totp = TOTP(key, TOTP_DIGITS, SHA256(), TOTP_VALID_TIME)
     time_value = time.time()
     t_value = totp.generate(int(time_value))
     return t_value
@@ -162,7 +164,7 @@ def get_rsa_public_key(cert_or_domain_name, tip):
     return (pub_key_rsa, cert_name)
 
 
-def get_rsa_private_key(keyfile, pwd=None):
+def get_rsa_private_key(keyfile, pwd=None, mem=True):
     """Legge una chiave privata RSA da un file.
 
     Args:
@@ -172,11 +174,17 @@ def get_rsa_private_key(keyfile, pwd=None):
     Returns:
         bytes: Chiave privata
     """
-    with open(keyfile, "rb") as key_file:
+    if mem:
         priv_key = serialization.load_pem_private_key(
-            key_file.read(),
+            keyfile,
             password=pwd,
         )
+    else:
+        with open(keyfile, "rb") as key_file:
+            priv_key = serialization.load_pem_private_key(
+                key_file.read(),
+                password=pwd,
+            )
 
     return priv_key
 
@@ -194,8 +202,8 @@ def get_enc_session_key(rsa_key, data):
     enc_data = rsa_key.encrypt(
         data,
         padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
+            mgf=padding.MGF1(algorithm=SHA256()),
+            algorithm=SHA256(),
             label=None,
         ),
     )
@@ -216,8 +224,8 @@ def get_dec_session_key(rsa_key, data):
     dec_data = rsa_key.decrypt(
         data,
         padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
+            mgf=padding.MGF1(algorithm=SHA256()),
+            algorithm=SHA256(),
             label=None,
         ),
     )
@@ -280,7 +288,7 @@ def encode_file(i_file, crt_or_domain, tip):
     file_out.close()
 
 
-def decode_file(i_file, pk_file):
+def decode_file(i_file, pk_file, memkey=False):
     o_file = i_file + ".copy"
     i_file = i_file + ".crypt"
 
@@ -297,7 +305,7 @@ def decode_file(i_file, pk_file):
     # Utilizzando il file di chiave privata del certificato usato per cifrare
     # recupera e decifra la chiave di sessione GCM
 
-    priv_rsa_key = get_rsa_private_key(pk_file)
+    priv_rsa_key = get_rsa_private_key(pk_file, mem=memkey)
     rsa_dec_gcm_key = get_dec_session_key(priv_rsa_key, rsa_enc_gcm_key)
 
     # Prepara la decifratura GCM utilizzando la chiave di sessione
@@ -345,12 +353,13 @@ def decode_file(i_file, pk_file):
 
 
 # encode_file("/home/mariano/Scrivania/Testfile.pdf", "www.magaldinnova.it", DNS) # noqa
-
 # decode_file("/home/mariano/Scrivania/Testfile.pdf", "/home/mariano/Scrivania/MI.key") # noqa
 
 conf_book = get_config()
-xchg_dh_key()
-# key_request_for_file('/home/mariano/Scrivania/Testfile.pdf.crypt')
+
+kk = priv_key_request_for_file('/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf.crypt')
+decode_file('/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf',kk, True)
+
 # pub_rsa_key = get_rsa_public_key('www.magaldinnova.it', DNS)
 # enc_pub_rsa_key = get_enc_session_key(pub_rsa_key, b'1233456789')
 

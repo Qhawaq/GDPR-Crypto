@@ -1,0 +1,4 @@
+1. Chiavi master su usb con mount effimero. Evita che in caso di reset dell macchina si possa accedere alle chiavi master e al db utenti.
+2. Chiavi da nomefile: evita che in caso di attacco da un crypto virus si possa risalire alla chiave del file ( forse aggiungere un salt è anche meglio)
+
+:/home/mariano/Documenti/RepoSoftware/GDPR-Crypto/GDPRUtils/src# uvicorn GDPRUtils.Keymaster.APIServer:app
