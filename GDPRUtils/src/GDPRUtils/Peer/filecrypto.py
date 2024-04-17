@@ -5,20 +5,18 @@ import time
 import yaml
 import requests
 
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+
 from cryptography import x509
 from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key,  Encoding # noqa
+from cryptography.hazmat.primitives.serialization import PrivateFormat, PublicFormat, NoEncryption  # noqa
+from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key, Encoding # noqa
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.hashes import SHA256
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.twofactor.totp import TOTP
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.serialization import BestAvailableEncryption  # noqa
-from cryptography.hazmat.primitives.serialization import PrivateFormat, NoEncryption  # noqa
-
-from base64 import urlsafe_b64decode, urlsafe_b64encode
 
 DNS = 0
 CRT = 1
@@ -59,7 +57,7 @@ def get_hkdf_key(master_key: bytes,
                                 Defaults to b'SecCheck01'.
 
     Returns:
-        bytes: Derived key        
+        bytes: Derived key
     """
     hkdf = HKDF(
         algorithm=SHA256(),
@@ -70,7 +68,7 @@ def get_hkdf_key(master_key: bytes,
     key = hkdf.derive(master_key)
     return key
 
-#scambio ECDH completo
+
 def priv_key_request_for_file(i_file):
     """
     La funzione analizza la testata del file cifrato per sapere dove
@@ -80,14 +78,14 @@ def priv_key_request_for_file(i_file):
     dh_private_key = ec.generate_private_key(ec.SECP384R1())
     dh_public_key = dh_private_key.public_key()
     dh_p = dh_public_key.public_bytes(
-        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        Encoding.PEM,
+        PublicFormat.SubjectPublicKeyInfo
     )  # noqa
 
     file_in = open(i_file, "rb")
     cert_name = file_in.read(50).decode().strip()
     file_in.close()
     cert = cert_name.split('=')
-
 
     if cert_name[0] == "0":
         # Il certificato è un DNS  quindi la chiave deve essere cercata
@@ -106,19 +104,18 @@ def priv_key_request_for_file(i_file):
             + myotp
             + mykey
         )  # type: ignore
-        
+
         r = requests.get(url)
         x = json.loads(r.text)  # type: ignore
 
-        server_key_bytes = load_pem_public_key(urlsafe_b64decode(x['server_key']))
+        server_key_bytes = load_pem_public_key(urlsafe_b64decode(x['server_key']))  # noqa
         shared_key = dh_private_key.exchange(ec.ECDH(), server_key_bytes)
-        stream_key = get_hkdf_key(shared_key) # chiave di decodifica
+        stream_key = get_hkdf_key(shared_key)  # chiave di decodifica
 
         pkb = load_pem_private_key(urlsafe_b64decode(x['keyfile']), stream_key)
         return pkb.private_bytes(
             Encoding.PEM, PrivateFormat.PKCS8, NoEncryption() # noqa
         )
-        #return private_key_bytes
     else:
         # Il certificato è un CRT locale quindi la chiave deve essere
         # cercata nel vault locale
@@ -175,13 +172,13 @@ def get_rsa_private_key(keyfile, pwd=None, mem=True):
         bytes: Chiave privata
     """
     if mem:
-        priv_key = serialization.load_pem_private_key(
+        priv_key = load_pem_private_key(
             keyfile,
             password=pwd,
         )
     else:
         with open(keyfile, "rb") as key_file:
-            priv_key = serialization.load_pem_private_key(
+            priv_key = load_pem_private_key(
                 key_file.read(),
                 password=pwd,
             )
@@ -357,8 +354,8 @@ def decode_file(i_file, pk_file, memkey=False):
 
 conf_book = get_config()
 
-kk = priv_key_request_for_file('/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf.crypt')
-decode_file('/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf',kk, True)
+kk = priv_key_request_for_file('/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf.crypt') # noqa
+decode_file('/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf', kk, True)
 
 # pub_rsa_key = get_rsa_public_key('www.magaldinnova.it', DNS)
 # enc_pub_rsa_key = get_enc_session_key(pub_rsa_key, b'1233456789')

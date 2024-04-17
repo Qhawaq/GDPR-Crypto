@@ -6,14 +6,13 @@ import time
 from .keyvault import stream_keyfile
 from fastapi import FastAPI
 
-from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key,  Encoding # noqa
-from cryptography.hazmat.primitives.serialization import BestAvailableEncryption  # noqa
-from cryptography.hazmat.primitives.serialization import PrivateFormat, PublicFormat # noqa
+from cryptography.hazmat.primitives.serialization import load_pem_public_key, Encoding, PublicFormat # noqa
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.twofactor.totp import TOTP
 from cryptography.hazmat.primitives.twofactor import InvalidToken
 from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.asymmetric import ec
+
 
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 
@@ -31,7 +30,7 @@ def get_hkdf_key(master_key: bytes,
                                 Defaults to b'SecCheck01'.
 
     Returns:
-        bytes: Derived key        
+        bytes: Derived key
     """
     hkdf = HKDF(
         algorithm=SHA256(),
@@ -64,7 +63,7 @@ def check_TOTP(seed: bytes, otp: bytes, w_time: int = 30) -> bool:
 
     return (False)
 
-print("Prima")
+
 app = FastAPI()
 
 
@@ -91,8 +90,7 @@ async def get_my_key(id: str, sel: str, otp: str, key: str,):
         shared_key = dh_private_key.exchange(ec.ECDH(), key_bytes)
         # deriva una chiave HKDF
         stream_key = get_hkdf_key(shared_key)
-        print("STREAM Key: ", stream_key)
-        
+
         enc_key = stream_keyfile(sel, stream_key)
         if enc_key is not None:
             return {"server_key": urlsafe_b64encode(server_key),

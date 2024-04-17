@@ -4,7 +4,7 @@ import yaml
 
 from pathlib import Path
 
-from cryptography.hazmat.primitives.serialization import load_pem_private_key, Encoding  # noqa
+from cryptography.hazmat.primitives.serialization import load_pem_private_key, Encoding # noqa
 from cryptography.hazmat.primitives.serialization import BestAvailableEncryption  # noqa
 from cryptography.hazmat.primitives.serialization import PrivateFormat, NoEncryption  # noqa
 from cryptography.hazmat.primitives import hashes
@@ -67,8 +67,10 @@ def store_keyfile(keyfile: str, newkeyfile: str | None = None) -> bool:
     file name for the prinvate key in the protected folder.
 
     Args:
-        keyfile (string): X.509 original private key file name ( with or without path )
-        newkeyfile (string, optional): X.509 new private key file name. Defaults to None.
+        keyfile (string): X.509 original private key file name
+                         ( with or without path )
+        newkeyfile (string, optional): X.509 new private key file name.
+                                       Defaults to None.
 
     Returns:
         bool: True if operation succeeded, False if not
@@ -80,7 +82,7 @@ def store_keyfile(keyfile: str, newkeyfile: str | None = None) -> bool:
         cryptkeyfile = kv_conf_book["keyfolder"] + "/" + i_file  # type: ignore
         pwd = create_key_hash(i_file)
     else:
-        cryptkeyfile = kv_conf_book["keyfolder"] + "/" + newkeyfile  # type: ignore
+        cryptkeyfile = kv_conf_book["keyfolder"] + "/" + newkeyfile
         pwd = create_key_hash(newkeyfile)
 
     try:
@@ -91,7 +93,8 @@ def store_keyfile(keyfile: str, newkeyfile: str | None = None) -> bool:
         return False
 
     p_key1 = p_key0.private_bytes(
-        Encoding.PEM, PrivateFormat.PKCS8, BestAvailableEncryption(pwd.encode())
+        Encoding.PEM, PrivateFormat.PKCS8,
+        BestAvailableEncryption(pwd.encode())
     )
 
     with open(cryptkeyfile, "w") as f:
@@ -163,7 +166,7 @@ def stream_keyfile(keyfile: str, pwd: bytes) -> bytes | None:
     return None
 
 
-kv_conf_book = get_config_file("/home/mariano/Documenti/RepoSoftware/GDPR-Crypto/server-config.yml")
+kv_conf_book = get_config_file("/home/mariano/Documenti/RepoSoftware/GDPR-Crypto/server-config.yml") # noqa
 
 if __name__ == "__main__":
-    store_keyfile('/home/mariano/Scrivania/GDPRUtils-Data/MI.key','www.magaldinnova.it')
+    store_keyfile('/home/mariano/Scrivania/GDPRUtils-Data/MI.key', 'www.magaldinnova.it') # noqa
