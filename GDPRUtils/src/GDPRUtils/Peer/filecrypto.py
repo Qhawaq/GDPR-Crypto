@@ -21,6 +21,9 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 DNS = 0
 CRT = 1
 
+OP_CRYPT = 0
+OP_DECRYPT = 1
+
 CRYPT_GCM_SESSION_KEY_SIZE = 32
 CRYPT_KEY_LOCATOR_SIZE = 50
 CRYPT_ENC_GCM_SIZE = 256
@@ -82,9 +85,9 @@ def priv_key_request_for_file(i_file):
         PublicFormat.SubjectPublicKeyInfo
     )  # noqa
 
-    file_in = open(i_file, "rb")
-    cert_name = file_in.read(50).decode().strip()
-    file_in.close()
+    # TODO: controllo errore di accesso
+    with open(i_file, "rb") as file_in:
+        cert_name = file_in.read(50).decode().strip()
     cert = cert_name.split('=')
 
     if True:   #  cert_name[0] == "0":
@@ -105,19 +108,26 @@ def priv_key_request_for_file(i_file):
             + mykey
         )  # type: ignore
 
-        r = requests.get(url)
-        x = json.loads(r.text)  # type: ignore
+        try:
+            r = requests.get(url)        
+            x = json.loads(r.text)  # type: ignore
 
-        server_key_bytes = load_pem_public_key(urlsafe_b64decode(x['server_key']))  # noqa
-        shared_key = dh_private_key.exchange(ec.ECDH(), server_key_bytes)
-        stream_key = get_hkdf_key(shared_key)  # chiave di decodifica
+            server_key_bytes = load_pem_public_key(urlsafe_b64decode(x['server_key']))  # noqa
+            shared_key = dh_private_key.exchange(ec.ECDH(), server_key_bytes)
+            stream_key = get_hkdf_key(shared_key)  # chiave di decodifica
 
-        pkb = load_pem_private_key(urlsafe_b64decode(x['keyfile']), stream_key)
-        return pkb.private_bytes(
-            Encoding.PEM, PrivateFormat.PKCS8, NoEncryption() # noqa
-        )
+            pkb = load_pem_private_key(urlsafe_b64decode(x['keyfile']), stream_key)
+            return pkb.private_bytes(
+                Encoding.PEM, PrivateFormat.PKCS8, NoEncryption() # noqa
+            )
+        except requests.exceptions.RequestException as e:
+            msg = 'FATAL Error: ' + conf_book["rest"]["url"] + ':' + str(conf_book["rest"]["port"]) + ' has some troubles with us.\nSee what it said:\n\n'  # type: ignore
+            for m in e.args:
+                msg += str(m)+'\n'
+            raise SystemExit(msg)
+
     else:
-        # Il certificato è un CRT locale quindi la chiave deve essere
+        # TODO: Il certificato è un CRT locale quindi la chiave deve essere
         # cercata nel vault locale
         pass
 
@@ -138,14 +148,17 @@ def get_totp_code():
 
 
 def get_rsa_public_key(certdata, tip: int):
-    """Estrae la chiave pubblica da un certificato tipo X.509
+    """Get an RSA Public Key form an X.509 certificate
 
     Args:
-        cert_or_domain_name (str): Nome del dominio o del file del certificato
+        certdata (str): X.509 Certificate Domain Name ( Internet )
+                        or Certificate file path (Local file )
         tip (int): Flag DNS/CRT
+                   If DNS function requests certificate on Internet using its domain name
+                   IF CRT function search for local certificate file specified by path 
 
     Returns:
-        (bytes,bytes): Chiave pubblica, Nome del certificato
+        (bytes,bytes): RSA Public Key extracted, Certificate 'CN' attribute
     """
 
     if tip == DNS:
@@ -162,14 +175,15 @@ def get_rsa_public_key(certdata, tip: int):
 
 
 def get_rsa_private_key(keyfile, pwd: bytes | None = None, mem: bool = False):
-    """Legge una chiave privata RSA da un file.
+    """Read a PEM formatted RSA private key from a file or from memory variable
 
     Args:
-        keyfile (string): Nome del file che contiene lachiave
-        pwd (bytes, optional): Password per PCKS. Defaults to None.
+        keyfile (any): PEM File name where to read key, or PEM memory 
+        pwd (bytes, optional): Password to . Defaults to None.
+        mem (bool, optional): True if PEM key is passed as variable, False if it is in file
 
     Returns:
-        bytes: Chiave privata
+        bytes: PEM private key in byte format
     """
     if mem:
         priv_key = load_pem_private_key(
@@ -186,48 +200,41 @@ def get_rsa_private_key(keyfile, pwd: bytes | None = None, mem: bool = False):
     return priv_key
 
 
-def get_enc_session_key(rsa_key, data):
-    """Cifra un blocco utilizzando AES-OAEP.
+def session_key_data(rsa_key, data: bytes, operation: int) -> bytes:
+    """Encrypt/Decrypt session key data in AES-256-OAEP using
+       the rsa_key param as key.
 
     Args:
-        rsa_key (bytes): Chiave RSA per codificare i dati
-        data (bytes): Dati da codificare
+        rsa_key (RSAPublicKey): A public RSA Key use to Encrypt/Decrypt data,
+        data (bytes): Data to Encrypt / Decrypt
+        operation (int): Operation flag
 
     Returns:
-        bytes: Dati codificati AES-OAEP
+        bytes: Encryption -> 256 bytes block cyphered session data
+               Decryption -> decrypted session data
     """
-    enc_data = rsa_key.encrypt(
-        data,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=SHA256()),
-            algorithm=SHA256(),
-            label=None,
-        ),
-    )
 
-    return enc_data
+    if operation == OP_CRYPT:
+        x_data = rsa_key.encrypt(
+            data,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=SHA256()),
+                algorithm=SHA256(),
+                label=None,
+            ),
+        )
 
+    if operation == OP_DECRYPT:
+        x_data = rsa_key.decrypt(
+            data,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=SHA256()),
+                algorithm=SHA256(),
+                label=None,
+            ),
+        )
 
-def get_dec_session_key(rsa_key, data):
-    """Decfira un blocco utilizzanndo AES-OAEP.
-
-    Args:
-        rsa_key (bytes): Chiave RSA per decodificare i dati
-        data (bytes): Dati da decodificare
-
-    Returns:
-        bytes: Dati decodficati
-    """
-    dec_data = rsa_key.decrypt(
-        data,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=SHA256()),
-            algorithm=SHA256(),
-            label=None,
-        ),
-    )
-
-    return dec_data
+    return x_data
 
 
 def encode_file(i_file, crt_or_domain, tip):
@@ -241,7 +248,7 @@ def encode_file(i_file, crt_or_domain, tip):
     # Crea la copia cifrata della chiave di sessione utilizzando
     # come chiave la chaive pubblica RSA del certificato
     rsa_pub_key, cert_name = get_rsa_public_key(crt_or_domain, tip)
-    rsa_enc_gcm_key = get_enc_session_key(rsa_pub_key, gcm_session_key)
+    rsa_enc_gcm_key = session_key_data(rsa_pub_key, gcm_session_key, OP_CRYPT)
 
     # Prepara la cifratura GCM utilizzando la chiave di sessione
     encryptor = Cipher(
@@ -273,8 +280,6 @@ def encode_file(i_file, crt_or_domain, tip):
         file_out.write(enc_data)
         data = file_in.read(BUFFER_SIZE)
 
-    # Viene aggiunto il valore del tag (16 bytes) emesso dal cifratore GCM
-    # al file cifrato rimuovendo il placeholder.
     encryptor.finalize()
 
     tg = encryptor.tag  # type: ignore
@@ -285,7 +290,7 @@ def encode_file(i_file, crt_or_domain, tip):
     file_out.close()
 
 
-def decode_file(i_file, pk_file, memkey=False):
+def decode_file(i_file, pk_file, memop=False):
     o_file = i_file + ".copy"
     i_file = i_file + ".crypt"
 
@@ -302,8 +307,8 @@ def decode_file(i_file, pk_file, memkey=False):
     # Utilizzando il file di chiave privata del certificato usato per cifrare
     # recupera e decifra la chiave di sessione GCM
 
-    priv_rsa_key = get_rsa_private_key(pk_file, mem=memkey)
-    rsa_dec_gcm_key = get_dec_session_key(priv_rsa_key, rsa_enc_gcm_key)
+    priv_rsa_key = get_rsa_private_key(pk_file, mem=memop)
+    rsa_dec_gcm_key = session_key_data(priv_rsa_key, rsa_enc_gcm_key, OP_DECRYPT)
 
     # Prepara la decifratura GCM utilizzando la chiave di sessione
     # decifrata
@@ -349,11 +354,11 @@ def decode_file(i_file, pk_file, memkey=False):
     file_out.close()
 
 
-# encode_file("/home/mariano/Scrivania/Testfile.pdf", "www.magaldinnova.it", DNS) # noqa
-# decode_file("/home/mariano/Scrivania/Testfile.pdf", "/home/mariano/Scrivania/MI.key") # noqa
-
 conf_book = get_config()
 
+
+# encode_file("/home/mariano/Scrivania/Testfile.pdf", "www.magaldinnova.it", DNS) # noqa
+# decode_file("/home/mariano/Scrivania/Testfile.pdf", "/home/mariano/Scrivania/MI.key") # noqa
 
 #encode_file("/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf", "/home/mariano/Scrivania/GDPRUtils-Data/GDPR_TEST_CERT.crt", CRT) # noqa
 #kk = priv_key_request_for_file('/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf.crypt') # noqa
