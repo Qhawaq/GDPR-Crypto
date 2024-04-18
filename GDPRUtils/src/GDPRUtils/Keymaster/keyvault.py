@@ -168,5 +168,5 @@ def stream_keyfile(keyfile: str, pwd: bytes) -> bytes | None:
 
 kv_conf_book = get_config_file("/home/mariano/Documenti/RepoSoftware/GDPR-Crypto/server-config.yml") # noqa
 
-if __name__ == "__main__":
-    store_keyfile('/home/mariano/Scrivania/GDPRUtils-Data/MI.key', 'www.magaldinnova.it') # noqa
+# if __name__ == "__main__":
+#    store_keyfile('/home/mariano/Scrivania/GDPRUtils-Data/GDPR_TEST_CERT.pem', 'GDPR_TEST_CERT') # noqa

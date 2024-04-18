@@ -87,7 +87,7 @@ def priv_key_request_for_file(i_file):
     file_in.close()
     cert = cert_name.split('=')
 
-    if cert_name[0] == "0":
+    if True:   #  cert_name[0] == "0":
         # Il certificato è un DNS  quindi la chiave deve essere cercata
         # nel server di chiavi
         myid = "id=" + conf_book["rest"]["id"]  # type: ignore
@@ -137,7 +137,7 @@ def get_totp_code():
     return t_value
 
 
-def get_rsa_public_key(cert_or_domain_name, tip):
+def get_rsa_public_key(certdata, tip: int):
     """Estrae la chiave pubblica da un certificato tipo X.509
 
     Args:
@@ -147,21 +147,21 @@ def get_rsa_public_key(cert_or_domain_name, tip):
     Returns:
         (bytes,bytes): Chiave pubblica, Nome del certificato
     """
+
     if tip == DNS:
-        cert = ssl.get_server_certificate((cert_or_domain_name, 443))
+        cert = ssl.get_server_certificate((certdata, 443))
 
     if tip == CRT:
-        cert = open(cert_or_domain_name).read()
+        cert = open(certdata).read()
 
-    cert = bytes(ssl.get_server_certificate((cert_or_domain_name, 443)), "utf-8")  # noqa
-    cert_obj = x509.load_pem_x509_certificate(cert)
+    cert_obj = x509.load_pem_x509_certificate(cert.encode())
     pub_key_rsa = cert_obj.public_key()
     cert_nm = x509.Name(cert_obj.subject.get_attributes_for_oid(NameOID.COMMON_NAME))  # noqa
     cert_name = f"{tip},{cert_nm.rfc4514_string():{' '}{'<'}{CRYPT_KEY_LOCATOR_SIZE -2}}".encode()  # noqa
     return (pub_key_rsa, cert_name)
 
 
-def get_rsa_private_key(keyfile, pwd=None, mem=True):
+def get_rsa_private_key(keyfile, pwd: bytes | None = None, mem: bool = False):
     """Legge una chiave privata RSA da un file.
 
     Args:
@@ -354,8 +354,10 @@ def decode_file(i_file, pk_file, memkey=False):
 
 conf_book = get_config()
 
-kk = priv_key_request_for_file('/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf.crypt') # noqa
-decode_file('/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf', kk, True)
+
+#encode_file("/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf", "/home/mariano/Scrivania/GDPRUtils-Data/GDPR_TEST_CERT.crt", CRT) # noqa
+#kk = priv_key_request_for_file('/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf.crypt') # noqa
+#decode_file('/home/mariano/Scrivania/GDPRUtils-Data/Testfile.pdf', kk, True)
 
 # pub_rsa_key = get_rsa_public_key('www.magaldinnova.it', DNS)
 # enc_pub_rsa_key = get_enc_session_key(pub_rsa_key, b'1233456789')
